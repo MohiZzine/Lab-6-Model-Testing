@@ -1,0 +1,299 @@
+\section{Part 2: Dockerizing the FastAPI Application}
+
+\subsection{Introduction to Docker}
+
+After successfully deploying the Question Answering model with FastAPI in Part 1, the next step was to containerize the application using Docker. Docker is a containerization platform that packages applications and their dependencies into isolated containers, making deployment consistent across different environments.
+
+\subsection{Why Docker?}
+
+I learned that Docker provides several key benefits for ML model deployment:
+
+\begin{itemize}
+    \item \textbf{Portability}: The same container runs identically on any machine with Docker installed
+    \item \textbf{Isolation}: The application and its dependencies are completely isolated from the host system
+    \item \textbf{Reproducibility}: Eliminates the "it works on my machine" problem
+    \item \textbf{Scalability}: Easy to replicate and scale containers in production
+    \item \textbf{Version Control}: Docker images can be versioned and stored in registries
+\end{itemize}
+
+This is particularly important in production environments where you need consistent behavior across development, testing, and deployment stages.
+
+\subsection{Setting Up Docker}
+
+Before building the Docker image, I needed to ensure Docker Desktop was installed and running on my machine.
+
+\subsubsection{Starting Docker Desktop}
+
+I opened Docker Desktop from the Windows Start menu and waited for it to fully initialize. This is a critical step because the Docker daemon must be running before any Docker commands will work.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{part2/part2_01_docker_desktop_running.png}
+    \caption{Docker Desktop running and ready}
+    \label{fig:docker_desktop}
+\end{figure}
+
+After Docker was running, I verified the installation by checking the version and running containers:
+
+\begin{lstlisting}[language=bash]
+docker --version
+docker ps
+\end{lstlisting}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{part2/part2_02_docker_version_and_ps.png}
+    \caption{Docker version and running containers check}
+    \label{fig:docker_version}
+\end{figure}
+
+The \texttt{docker ps} command showed no running containers, which was expected at this stage.
+
+\subsection{Understanding the Dockerfile}
+
+I navigated to the \texttt{2. Dockerizing\_API} folder and examined the Dockerfile. A Dockerfile is essentially a recipe that tells Docker how to build an image. Let me break down each instruction:
+
+\begin{lstlisting}[language=docker]
+FROM python:3.9
+\end{lstlisting}
+
+This line specifies the base image - a minimal Linux system with Python 3.9 pre-installed. Docker images are built in layers, and this is our foundation layer.
+
+\begin{lstlisting}[language=docker]
+RUN pip install torch
+\end{lstlisting}
+
+This installs PyTorch in the container. Each RUN command creates a new layer in the image. PyTorch is quite large (around 800MB), so this step takes significant time.
+
+\begin{lstlisting}[language=docker]
+RUN pip install fastapi uvicorn transformers
+\end{lstlisting}
+
+This installs the web framework (FastAPI, uvicorn) and the transformers library needed for our model.
+
+\begin{lstlisting}[language=docker]
+EXPOSE 8000
+\end{lstlisting}
+
+This documents that the container will listen on port 8000. It's mainly for documentation purposes and doesn't actually publish the port.
+
+\begin{lstlisting}[language=docker]
+COPY ./app /app
+\end{lstlisting}
+
+This copies our application code from the \texttt{app} folder on the host machine into the \texttt{/app} directory inside the container.
+
+\begin{lstlisting}[language=docker]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+\end{lstlisting}
+
+This is the command that runs when the container starts. The \texttt{--host 0.0.0.0} makes the server accessible from outside the container.
+
+\subsection{Preparing the Application Code}
+
+The application code in the \texttt{app} folder is almost identical to Part 1, with one important difference - I removed the \texttt{if \_\_name\_\_ == '\_\_main\_\_':} block because uvicorn will be started by the CMD instruction in the Dockerfile instead.
+
+I also had to add \texttt{framework='pt'} to force PyTorch usage, avoiding the TensorFlow/Keras compatibility issues I encountered earlier:
+
+\begin{lstlisting}[language=Python]
+model = pipeline(model=model_name, tokenizer=model_name,
+                 task='question-answering', framework='pt')
+\end{lstlisting}
+
+\subsection{Building the Docker Image}
+
+With everything prepared, I ran the build command:
+
+\begin{lstlisting}[language=bash]
+docker build -t qaapi .
+\end{lstlisting}
+
+The \texttt{-t qaapi} flag tags (names) the image as "qaapi", and the \texttt{.} tells Docker to look for the Dockerfile in the current directory.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{part2/part2_03_docker_build_in_progress.png}
+    \caption{Docker build process in progress - downloading layers}
+    \label{fig:docker_build_progress}
+\end{figure}
+
+The build process took approximately 18 minutes on my machine. Here's what happened:
+
+\begin{enumerate}
+    \item Downloaded the Python 3.9 base image (~150MB)
+    \item Installed PyTorch and its CUDA dependencies (~2GB total)
+    \item Installed FastAPI, uvicorn, and transformers (~50MB)
+    \item Copied the application code
+    \item Created the final image
+\end{enumerate}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{part2/part2_04_docker_build_completed.png}
+    \caption{Docker build completed successfully}
+    \label{fig:docker_build_complete}
+\end{figure}
+
+When the build completed, I could see the final line showing the image was successfully created. The newer version of Docker doesn't display "Successfully tagged qaapi:latest" like older versions, but the image was ready.
+
+\subsection{Verifying the Image}
+
+I verified that the image was created using:
+
+\begin{lstlisting}[language=bash]
+docker images
+\end{lstlisting}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{part2/part2_05_docker_images_list.png}
+    \caption{Docker images list showing the qaapi image}
+    \label{fig:docker_images}
+\end{figure}
+
+The image appeared in the list, confirming it was built successfully. The image size was approximately 3.5GB, which includes Python, PyTorch, all dependencies, and our application code.
+
+\subsection{Running the Container}
+
+With the image ready, I started a container from it:
+
+\begin{lstlisting}[language=bash]
+docker run -p 8000:8000 qaapi
+\end{lstlisting}
+
+The \texttt{-p 8000:8000} flag maps port 8000 on my machine to port 8000 inside the container, making the API accessible at \texttt{http://localhost:8000}.
+
+When I ran this command, something interesting happened - the DistilBERT model needed to be downloaded again! This is because the model downloads to a cache directory at runtime, and each time you start a fresh container, it starts with a clean filesystem (except for what was built into the image).
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{part2/part2_06_container_running.png}
+    \caption{Docker container running with FastAPI server started}
+    \label{fig:container_running}
+\end{figure}
+
+Once the model finished downloading and the server started, I could see the familiar "Application startup complete" and "Uvicorn running on http://0.0.0.0:8000" messages.
+
+\subsection{Testing the Dockerized API}
+
+To test the containerized API, I opened a new terminal window and ran the Python test script I created:
+
+\begin{lstlisting}[language=bash]
+python test_docker_api.py
+\end{lstlisting}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{part2/part2_07_python_test_success.png}
+    \caption{Successful API test of the Dockerized application}
+    \label{fig:docker_test}
+\end{figure}
+
+The API responded successfully with the correct answer: \textit{"the task of extracting an answer from a text given a question"}. This confirmed that the Dockerized version of the API was working exactly like the non-containerized version from Part 1.
+
+\subsection{Key Differences from Part 1}
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{|l|p{5cm}|p{5cm}|}
+        \hline
+        \textbf{Aspect} & \textbf{Part 1 (Direct FastAPI)} & \textbf{Part 2 (Dockerized)} \\
+        \hline
+        Environment & Local Python installation & Isolated Docker container \\
+        \hline
+        Setup & Install packages with pip & Build Docker image once \\
+        \hline
+        Portability & Only works on my machine & Runs anywhere with Docker \\
+        \hline
+        Command to Start & \texttt{python main.py} & \texttt{docker run -p 8000:8000 qaapi} \\
+        \hline
+        Dependencies & Must install manually & Bundled in image \\
+        \hline
+        Model Cache & Persists on host & Redownloads per container \\
+        \hline
+        Isolation & Shares system resources & Completely isolated \\
+        \hline
+    \end{tabular}
+    \caption{Comparison between Part 1 and Part 2 deployments}
+    \label{tab:part1_vs_part2}
+\end{table}
+
+\subsection{Challenges and Solutions}
+
+\subsubsection{Docker Not Running Error}
+
+Initially, when I tried to build the image, I got an error: "error during connect: The system cannot find the file specified." This happened because Docker Desktop wasn't running. The solution was simple - start Docker Desktop and wait for it to fully initialize before running any Docker commands.
+
+\subsubsection{Model Downloading in Container}
+
+I was surprised when the model downloaded again inside the container. I learned this is because Docker containers start with a fresh filesystem each time. In a production scenario, you could either:
+\begin{itemize}
+    \item Download the model during the Docker build process (increasing image size)
+    \item Use Docker volumes to persist the model cache
+    \item Pre-download the model and copy it into the image
+\end{itemize}
+
+For this lab, re-downloading wasn't a major issue since it only happens on first container startup.
+
+\subsubsection{Port Exposure Confusion}
+
+I noticed the Dockerfile had \texttt{EXPOSE 80} but the CMD used port 8000. I corrected this to \texttt{EXPOSE 8000} for consistency, though EXPOSE is mainly documentation - the actual port mapping happens with the \texttt{-p} flag when running the container.
+
+\subsection{Docker Commands Reference}
+
+Here are the Docker commands I used and learned during this part:
+
+\begin{lstlisting}[language=bash]
+# Build an image
+docker build -t <image_name> .
+
+# List all images
+docker images
+
+# Run a container
+docker run -p <host_port>:<container_port> <image_name>
+
+# Run in background (detached mode)
+docker run -d -p 8000:8000 --name my_container qaapi
+
+# List running containers
+docker ps
+
+# List all containers (including stopped)
+docker ps -a
+
+# Stop a container
+docker stop <container_id_or_name>
+
+# View container logs
+docker logs <container_id_or_name>
+
+# Remove a container
+docker rm <container_id_or_name>
+
+# Remove an image
+docker rmi <image_name>
+\end{lstlisting}
+
+\subsection{Understanding Docker Layers}
+
+One important concept I learned is that Docker images are built in layers. Each instruction in the Dockerfile creates a new layer. When you rebuild an image, Docker can reuse layers that haven't changed, making subsequent builds much faster.
+
+For example, if I only modified the application code in the \texttt{app} folder and rebuilt the image, Docker would reuse all the layers up to the COPY instruction, only rebuilding the final layer. This is why the order of instructions in a Dockerfile matters.
+
+\subsection{Conclusion}
+
+In Part 2, I successfully containerized the FastAPI Question Answering application using Docker. The main achievement was creating a portable, reproducible deployment that can run consistently across any environment with Docker installed.
+
+Key takeaways:
+\begin{itemize}
+    \item Docker provides isolation and portability for applications
+    \item Building a Docker image involves creating layers from Dockerfile instructions
+    \item The containerized application behaves identically to the local version
+    \item Docker images can be large when including deep learning dependencies
+    \item Port mapping is essential for making services accessible outside containers
+\end{itemize}
+
+The Dockerized version will now be ready for performance testing in Part 4, where I'll compare it against the direct FastAPI deployment and the TFX deployment to see if containerization affects response times and throughput.
+
+In the next part, I'll explore TensorFlow Extended (TFX) for serving the model, which promises even better performance for production deployments.

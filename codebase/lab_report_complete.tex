@@ -1,0 +1,574 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{titlesec}
+
+% Code listing style
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+\lstdefinestyle{pythonstyle}{
+    backgroundcolor=\color{backcolour},
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,
+    breaklines=true,
+    captionpos=b,
+    keepspaces=true,
+    numbers=left,
+    numbersep=5pt,
+    showspaces=false,
+    showstringspaces=false,
+    showtabs=false,
+    tabsize=2
+}
+
+\lstset{style=pythonstyle}
+
+\title{MLOps - Model Testing Lab Report\\
+Deploying and Testing NLP Models with Different Approaches}
+\author{Mohieddine Farid\\CS3 - College of Computing}
+\date{December 14, 2025}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+\newpage
+
+\section{Introduction}
+
+In this lab, I explored different deployment strategies for a transformer-based NLP model and attempted to compare their performance using load testing tools. The lab consisted of four parts:
+
+\begin{enumerate}
+    \item Serving a Question Answering model using FastAPI
+    \item Containerizing the FastAPI application using Docker
+    \item Serving the model using TensorFlow Extended (TFX) - \textit{attempted but encountered technical issues}
+    \item Load testing with Locust - \textit{partially completed}
+\end{enumerate}
+
+The model I used throughout is DistilBERT, a lightweight version of BERT pre-trained on the SQuAD dataset for extractive question answering tasks. This report documents what I successfully implemented and the challenges I encountered.
+
+\section{Part 1: FastAPI Deployment}
+
+\subsection{Overview}
+
+The first part involved creating a REST API using FastAPI to serve a pre-trained DistilBERT model for question answering. Extractive question answering means the model identifies and extracts an answer directly from a given text context - it doesn't generate new text.
+
+\subsection{Implementation}
+
+I worked with the code in the \texttt{1. fastAPI\_Transformer\_model\_serving} folder. The implementation consisted of several components:
+
+\subsubsection{Setting Up Dependencies}
+
+First, I installed the necessary packages:
+
+\begin{lstlisting}[language=bash]
+pip install torch transformers fastapi uvicorn
+\end{lstlisting}
+
+\subsubsection{Data Model}
+
+I used Pydantic to define the input data structure, ensuring requests contain both a question and context:
+
+\begin{lstlisting}[language=Python]
+from pydantic import BaseModel
+
+class QADataModel(BaseModel):
+    question: str
+    context: str
+\end{lstlisting}
+
+\subsubsection{Loading the Model}
+
+The DistilBERT model was loaded using the transformers pipeline:
+
+\begin{lstlisting}[language=Python]
+from transformers import pipeline
+
+model_name = 'distilbert-base-cased-distilled-squad'
+model = pipeline(model=model_name, tokenizer=model_name,
+                 task='question-answering', framework='pt')
+\end{lstlisting}
+
+I had to add \texttt{framework='pt'} to force PyTorch usage because I encountered a compatibility issue with TensorFlow and Keras 3. The error message indicated that Keras 3 wasn't yet supported by the transformers library, so using PyTorch directly solved the problem.
+
+\subsubsection{API Endpoint}
+
+The main endpoint processes question-answering requests:
+
+\begin{lstlisting}[language=Python]
+@app.post("/question_answering")
+async def qa(input_data: QADataModel):
+    result = model(question=input_data.question,
+                   context=input_data.context)
+    return {"answer": result["answer"]}
+\end{lstlisting}
+
+\subsubsection{Starting the Server}
+
+I started the server using uvicorn:
+
+\begin{lstlisting}[language=Python]
+if __name__ == '__main__':
+    uvicorn.run('main:app', workers=1)
+\end{lstlisting}
+
+\subsection{Testing}
+
+I tested the API in two ways:
+
+\subsubsection{Using FastAPI's Interactive Documentation}
+
+FastAPI automatically generates Swagger UI documentation at \texttt{http://127.0.0.1:8000/docs}, which I used for initial testing.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{part1_01_server_running.png}
+    \caption{FastAPI server running successfully on port 8000}
+    \label{fig:p1_server}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{part1_02_swagger_ui.png}
+    \caption{FastAPI automatic Swagger UI documentation}
+    \label{fig:p1_swagger}
+\end{figure}
+
+I tested with this example:
+
+\begin{lstlisting}[language=json]
+{
+  "question": "What is extractive question answering?",
+  "context": "Extractive Question Answering is the task of
+  extracting an answer from a text given a question. An example
+  of a question answering dataset is the SQuAD dataset, which is
+  entirely based on that task."
+}
+\end{lstlisting}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{part1_04_swagger_response.png}
+    \caption{API response showing the extracted answer}
+    \label{fig:p1_response}
+\end{figure}
+
+The model correctly extracted: \textit{"the task of extracting an answer from a text given a question"}.
+
+\subsubsection{Using a Python Test Script}
+
+I created \texttt{test\_api.py} to test programmatically:
+
+\begin{lstlisting}[language=Python]
+import requests
+import json
+
+url = "http://127.0.0.1:8000/question_answering"
+data = {
+    "question": "What is extractive question answering?",
+    "context": "Extractive Question Answering is the task..."
+}
+
+response = requests.post(url, json=data)
+if response.status_code == 200:
+    print("SUCCESS!")
+    print(json.dumps(response.json(), indent=2))
+\end{lstlisting}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{part1_06_python_test_api.png}
+    \caption{Testing the API using a Python script}
+    \label{fig:p1_python_test}
+\end{figure}
+
+\subsection{Key Takeaways from Part 1}
+
+\begin{itemize}
+    \item FastAPI makes it very easy to create ML model APIs with automatic documentation
+    \item The transformers library provides a simple pipeline interface for loading and using models
+    \item PyTorch compatibility issues can be resolved by explicitly specifying the framework
+    \item The first run downloads the model (~250MB) which is then cached locally
+\end{itemize}
+
+\section{Part 2: Dockerizing the API}
+
+\subsection{Motivation}
+
+After successfully deploying the API locally, the next step was containerization. Docker provides:
+\begin{itemize}
+    \item \textbf{Portability}: The container runs identically on any machine with Docker
+    \item \textbf{Isolation}: Application dependencies don't conflict with the host system
+    \item \textbf{Reproducibility}: Eliminates environment-specific issues
+\end{itemize}
+
+\subsection{Preparing Docker}
+
+I ensured Docker Desktop was running before proceeding:
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{part2/part2_01_docker_desktop_running.png}
+    \caption{Docker Desktop running and ready}
+    \label{fig:p2_docker}
+\end{figure}
+
+\subsection{The Dockerfile}
+
+I examined the provided Dockerfile in the \texttt{2. Dockerizing\_API} folder:
+
+\begin{lstlisting}[language=docker]
+FROM python:3.9
+RUN pip install torch
+RUN pip install fastapi uvicorn transformers
+EXPOSE 8000
+COPY ./app /app
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+\end{lstlisting}
+
+Key points:
+\begin{itemize}
+    \item \texttt{FROM python:3.9}: Uses Python 3.9 as the base image
+    \item \texttt{RUN pip install}: Installs dependencies inside the container
+    \item \texttt{COPY ./app /app}: Copies application code into the container
+    \item \texttt{CMD}: Specifies the command to run when the container starts
+    \item \texttt{--host 0.0.0.0}: Makes the server accessible from outside the container
+\end{itemize}
+
+\subsection{Code Modifications}
+
+I had to modify the application code slightly:
+\begin{enumerate}
+    \item Removed the \texttt{if \_\_name\_\_ == '\_\_main\_\_':} block since uvicorn is started by the Dockerfile CMD
+    \item Added \texttt{framework='pt'} to avoid TensorFlow/Keras issues
+\end{enumerate}
+
+\subsection{Building the Docker Image}
+
+I ran the build command:
+
+\begin{lstlisting}[language=bash]
+docker build -t qaapi .
+\end{lstlisting}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{part2/part2_03_docker_build_in_progress.png}
+    \caption{Docker build process in progress}
+    \label{fig:p2_build}
+\end{figure}
+
+The build took approximately 18 minutes, downloading and installing:
+\begin{itemize}
+    \item Python 3.9 base image (~150MB)
+    \item PyTorch with dependencies (~2GB)
+    \item FastAPI, uvicorn, and transformers (~50MB)
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{part2/part2_04_docker_build_completed.png}
+    \caption{Docker build completed successfully}
+    \label{fig:p2_complete}
+\end{figure}
+
+\subsection{Verifying the Image}
+
+I checked that the image was created:
+
+\begin{lstlisting}[language=bash]
+docker images
+\end{lstlisting}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{part2/part2_05_docker_images_list.png}
+    \caption{Docker images list showing the qaapi image}
+    \label{fig:p2_images}
+\end{figure}
+
+The final image size was approximately 3.5GB, which includes all dependencies.
+
+\subsection{Running the Container}
+
+I started the container with port mapping:
+
+\begin{lstlisting}[language=bash]
+docker run -p 8000:8000 qaapi
+\end{lstlisting}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{part2/part2_06_container_running.png}
+    \caption{Docker container running with FastAPI server started}
+    \label{fig:p2_running}
+\end{figure}
+
+Interestingly, the DistilBERT model downloaded again inside the container because Docker containers start with a fresh filesystem each time. In production, this could be optimized by downloading the model during the build process.
+
+\subsection{Testing the Dockerized API}
+
+I tested the containerized API using my Python script:
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{part2/part2_07_python_test_success.png}
+    \caption{Successful API test of the Dockerized application}
+    \label{fig:p2_test}
+\end{figure}
+
+The API responded correctly, confirming that the Dockerized version worked identically to the local deployment.
+
+\subsection{Comparison: Direct vs Dockerized}
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{|l|p{5.5cm}|p{5.5cm}|}
+        \hline
+        \textbf{Aspect} & \textbf{Part 1 (FastAPI)} & \textbf{Part 2 (Docker)} \\
+        \hline
+        Setup & Install packages locally & Build image once \\
+        \hline
+        Portability & Machine-specific & Runs anywhere with Docker \\
+        \hline
+        Start Command & \texttt{python main.py} & \texttt{docker run -p 8000:8000 qaapi} \\
+        \hline
+        Environment & Shared with host & Isolated container \\
+        \hline
+        Model Cache & Persists locally & Redownloads per fresh container \\
+        \hline
+    \end{tabular}
+    \caption{Comparison between direct and Dockerized deployments}
+    \label{tab:comparison}
+\end{table}
+
+\subsection{Key Takeaways from Part 2}
+
+\begin{itemize}
+    \item Docker successfully containerized the application with all dependencies
+    \item Image size can be large when including deep learning frameworks
+    \item Port mapping (\texttt{-p}) is essential for accessing containerized services
+    \item Model caching behavior differs between local and containerized deployments
+    \item The containerized API behaves identically to the local version
+\end{itemize}
+
+\section{Part 3: TFX Model Serving - Attempted}
+
+\subsection{The Goal}
+
+Part 3 aimed to deploy the model using TensorFlow Extended (TFX), which promises better performance for production deployments. The architecture would involve:
+\begin{itemize}
+    \item A TFX Docker container serving the saved model
+    \item A FastAPI service as an intermediary to handle tokenization
+    \item Communication via REST API on port 8501
+\end{itemize}
+
+\subsection{Issues Encountered}
+
+Unfortunately, I was unable to complete Part 3 due to technical challenges:
+
+\subsubsection{Windows Long Path Limitation}
+
+When attempting to install TensorFlow in the virtual environment for Part 3, I encountered this error:
+
+\begin{lstlisting}[language=bash]
+ERROR: Could not install packages due to an OSError: [Errno 2]
+No such file or directory: 'C:\\Users\\farid\\OneDrive\\Desktop\\
+Model Testing\\codebase\\3. Faster_Transformer_model_serving_
+using_Tensorflow_Extended\\venv\\Lib\\site-packages\\tensorflow\\
+include\\external\\com_github_grpc_grpc\\src\\core\\ext\\filters\\
+fault_injection\\fault_injection_service_config_parser.h'
+
+HINT: This error might have occurred since this system does not
+have Windows Long Path support enabled.
+\end{lstlisting}
+
+\subsubsection{Analysis of the Problem}
+
+The error indicates that Windows has a default path length limit of 260 characters, and TensorFlow's file structure exceeds this limit. The deeply nested folder structure of my project, combined with OneDrive's path and TensorFlow's internal structure, created paths longer than the system limit.
+
+\subsubsection{Attempted Solutions}
+
+I researched potential solutions:
+\begin{enumerate}
+    \item Enabling Windows Long Path support (requires administrator access and registry modifications)
+    \item Moving the project to a shorter path (e.g., \texttt{C:\textbackslash tfx})
+    \item Using a different Python environment manager
+    \item Installing TensorFlow globally instead of in a virtual environment
+\end{enumerate}
+
+However, given time constraints and the risk of system modifications, I was unable to resolve this issue before the deadline.
+
+\subsection{What I Learned}
+
+Despite not completing Part 3, I learned:
+\begin{itemize}
+    \item TFX requires saved model format from TensorFlow
+    \item The architecture uses a two-tier approach: TFX for model serving and FastAPI for preprocessing
+    \item Windows path length limitations can be a real issue in development
+    \item Project folder structure and location matter for compatibility
+\end{itemize}
+
+\section{Part 4: Load Testing with Locust - Attempted}
+
+\subsection{The Goal}
+
+Part 4 aimed to use Locust, a load testing tool, to compare the performance of all three deployments by measuring:
+\begin{itemize}
+    \item RPS (Requests Per Second)
+    \item Average Response Time (ms)
+    \item Failure rates
+\end{itemize}
+
+\subsection{Locust Installation}
+
+I successfully installed Locust:
+
+\begin{lstlisting}[language=bash]
+pip install locust
+\end{lstlisting}
+
+However, the executable wasn't added to the system PATH, so I had to run it using:
+
+\begin{lstlisting}[language=bash]
+python -m locust -f locust_file.py
+\end{lstlisting}
+
+\subsection{Understanding the Locust File}
+
+The provided \texttt{locust\_file.py} defines user behavior:
+
+\begin{lstlisting}[language=Python]
+from locust import HttpUser, task
+from random import choice
+from string import ascii_uppercase
+
+class User(HttpUser):
+    @task
+    def predict(self):
+        payload = {"text": ''.join(choice(ascii_uppercase)
+                   for i in range(20))}
+        self.client.post("/sentiment", json=payload)
+\end{lstlisting}
+
+This simulates users sending random 20-character strings to a \texttt{/sentiment} endpoint. However, this doesn't match either Part 1 or Part 2, which use a \texttt{/question\_answering} endpoint expecting both question and context.
+
+\subsection{Locust Web Interface}
+
+I successfully launched Locust and accessed the web interface at \texttt{http://localhost:8089/}:
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{part4/Screenshot 2025-12-14 231206.png}
+    \caption{Locust configuration interface for starting a load test}
+    \label{fig:p4_config}
+\end{figure}
+
+The interface allows configuring:
+\begin{itemize}
+    \item Number of users (peak concurrency)
+    \item Spawn rate (users started per second)
+    \item Host (the API endpoint to test)
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{part4/Screenshot 2025-12-14 231128.png}
+    \caption{Locust statistics dashboard showing test metrics}
+    \label{fig:p4_stats}
+\end{figure}
+
+The statistics tab would show:
+\begin{itemize}
+    \item Total requests and failures
+    \item Response time percentiles (median, 95th, 99th)
+    \item Current RPS
+    \item Request size and response size
+\end{itemize}
+
+\subsection{Issues Preventing Full Testing}
+
+I couldn't complete the full load testing comparison because:
+
+\begin{enumerate}
+    \item \textbf{Part 3 (TFX) wasn't working} due to the TensorFlow installation issues
+    \item \textbf{Endpoint mismatch}: The provided \texttt{locust\_file.py} targets \texttt{/sentiment}, but Parts 1 and 2 use \texttt{/question\_answering}
+    \item \textbf{Time constraints}: Modifying the Locust file and running comprehensive tests on both deployments would require additional time
+\end{enumerate}
+
+\subsection{What I Learned About Load Testing}
+
+Despite not completing full tests, I learned:
+\begin{itemize}
+    \item Locust provides a web-based interface for configuring and monitoring load tests
+    \item Load testing simulates multiple concurrent users to measure performance
+    \item Key metrics are RPS (throughput) and response time (latency)
+    \item The test script defines user behavior using Python code
+    \item Real-world testing requires matching the test payload to the actual API contract
+\end{itemize}
+
+\section{Overall Challenges and Learning}
+
+\subsection{Technical Challenges}
+
+Throughout this lab, I encountered several technical challenges:
+
+\begin{enumerate}
+    \item \textbf{TensorFlow/Keras Compatibility}: Resolved by forcing PyTorch usage
+    \item \textbf{Windows Path Length Limitation}: Prevented TFX implementation
+    \item \textbf{Docker Learning Curve}: Successfully overcome by understanding Dockerfile structure
+    \item \textbf{Endpoint Mismatches}: The lab's test files didn't always match the actual implementations
+\end{enumerate}
+
+\subsection{Key Learning Outcomes}
+
+Despite not completing all four parts, I gained valuable experience:
+
+\begin{itemize}
+    \item \textbf{Model Deployment}: Successfully deployed an NLP model using FastAPI
+    \item \textbf{Containerization}: Created a Docker image and ran a containerized API
+    \item \textbf{API Testing}: Used multiple methods (Swagger UI, Python scripts) to test APIs
+    \item \textbf{Troubleshooting}: Diagnosed and resolved compatibility issues
+    \item \textbf{Documentation}: Learned to read and understand framework documentation
+    \item \textbf{Real-world Constraints}: Experienced actual development challenges like path limitations
+\end{itemize}
+
+\subsection{What I Would Do Differently}
+
+If I were to repeat this lab, I would:
+
+\begin{enumerate}
+    \item Use a shorter project path from the beginning (e.g., \texttt{C:\textbackslash tfx\_lab})
+    \item Enable Windows Long Path support before starting
+    \item Verify all test files match the actual API endpoints
+    \item Allocate more time for troubleshooting Part 3
+    \item Create a unified test script that works for all three deployments
+\end{enumerate}
+
+\section{Conclusion}
+
+This lab provided hands-on experience with different approaches to deploying machine learning models. I successfully completed Parts 1 and 2, deploying a DistilBERT question-answering model using FastAPI and Docker. While I encountered blocking issues with Parts 3 and 4, these challenges were valuable learning experiences about real-world deployment constraints and the importance of proper environment setup.
+
+The main achievements were:
+\begin{itemize}
+    \item Understanding how to serve transformer models via REST APIs
+    \item Learning Docker containerization for ML deployments
+    \item Gaining exposure to load testing concepts and tools
+    \item Developing troubleshooting skills for dependency conflicts
+\end{itemize}
+
+The incomplete sections highlight important lessons about system requirements, path limitations, and the need for thorough environment preparation when working with complex ML frameworks like TensorFlow.
+
+\end{document}

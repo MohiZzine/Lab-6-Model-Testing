@@ -1,0 +1,271 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{titlesec}
+
+% Code listing style
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+\lstdefinestyle{pythonstyle}{
+    backgroundcolor=\color{backcolour},
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,
+    breaklines=true,
+    captionpos=b,
+    keepspaces=true,
+    numbers=left,
+    numbersep=5pt,
+    showspaces=false,
+    showstringspaces=false,
+    showtabs=false,
+    tabsize=2
+}
+
+\lstset{style=pythonstyle}
+
+\title{MLOps - Model Testing Lab Report\\Part 1: Serving an NLP Model with FastAPI}
+\author{Mohieddine Farid\\CS3 - College of Computing}
+\date{December 14, 2025}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+\newpage
+
+\section{Introduction}
+
+In this lab, I worked on deploying and testing a transformer-based NLP model using different deployment strategies. The goal was to compare the performance of three different approaches: using FastAPI directly, dockerizing the FastAPI application, and serving the model with TensorFlow Extended (TFX). This report covers Part 1 of the lab, where I implemented a Question Answering API using FastAPI.
+
+The model I used is DistilBERT, which is a lighter and faster version of BERT (Bidirectional Encoder Representations from Transformers). It's trained on the SQuAD dataset and can extract answers from text passages given a question.
+
+\section{Understanding the Task}
+
+\subsection{What is Question Answering?}
+
+Question Answering (QA) is a natural language processing task where the model needs to find an answer to a question within a given context. The approach we're using is called "extractive" question answering, which means the answer must be a direct substring from the provided context - the model doesn't generate new text, it just identifies and extracts the relevant portion.
+
+For example, if I ask "What is extractive question answering?" and provide a context that contains the definition, the model will locate and extract the exact answer from that context.
+
+\subsection{Why DistilBERT?}
+
+DistilBERT is a distilled version of BERT that maintains 97\% of BERT's performance while being 60\% smaller and faster. This makes it perfect for deployment scenarios where we need a good balance between accuracy and speed. The model I used was pre-trained on the SQuAD (Stanford Question Answering Dataset), which contains over 100,000 question-answer pairs.
+
+\section{Implementation}
+
+\subsection{Setting Up the Environment}
+
+First, I needed to install the required packages. I ran the following command to install PyTorch, transformers, FastAPI, and uvicorn:
+
+\begin{lstlisting}[language=bash]
+pip install torch transformers fastapi uvicorn
+\end{lstlisting}
+
+\subsection{The FastAPI Application}
+
+I worked with the \texttt{main.py} file in the \texttt{1. fastAPI\_Transformer\_model\_serving} folder. The code consists of several key components:
+
+\subsubsection{Data Model Definition}
+
+I started by defining a Pydantic model to validate the input data structure:
+
+\begin{lstlisting}[language=Python]
+from pydantic import BaseModel
+
+class QADataModel(BaseModel):
+    question: str
+    context: str
+\end{lstlisting}
+
+This ensures that any request to our API must include both a question and a context, and both must be strings. Pydantic handles the validation automatically and returns clear error messages if the input is invalid.
+
+\subsubsection{Loading the Model}
+
+Next, I loaded the DistilBERT model using the transformers pipeline:
+
+\begin{lstlisting}[language=Python]
+from transformers import pipeline
+
+model_name = 'distilbert-base-cased-distilled-squad'
+model = pipeline(model=model_name, tokenizer=model_name,
+                 task='question-answering', framework='pt')
+\end{lstlisting}
+
+I had to explicitly specify \texttt{framework='pt'} (PyTorch) because I encountered an issue with TensorFlow and Keras 3 compatibility. The error message told me that Keras 3 wasn't supported yet, so forcing PyTorch resolved the problem.
+
+\subsubsection{Creating the API Endpoint}
+
+The main endpoint handles POST requests and processes the question-answering task:
+
+\begin{lstlisting}[language=Python]
+@app.post("/question_answering")
+async def qa(input_data: QADataModel):
+    result = model(question=input_data.question,
+                   context=input_data.context)
+    return {"answer": result["answer"]}
+\end{lstlisting}
+
+I used \texttt{async def} to make the function asynchronous, which allows the server to handle multiple requests more efficiently.
+
+\subsubsection{Starting the Server}
+
+Finally, I started the server using uvicorn:
+
+\begin{lstlisting}[language=Python]
+if __name__ == '__main__':
+    uvicorn.run('main:app', workers=1)
+\end{lstlisting}
+
+With 1 worker, the server handles one request at a time.
+
+\section{Testing the API}
+
+\subsection{Running the Server}
+
+I navigated to the project folder and ran the application:
+
+\begin{lstlisting}[language=bash]
+cd "1. fastAPI_Transformer_model_serving"
+python main.py
+\end{lstlisting}
+
+The first time I ran this, the model downloaded from Hugging Face (about 250MB). After that, the server started successfully on \texttt{http://127.0.0.1:8000}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{part1_01_server_running.png}
+    \caption{FastAPI server running successfully on port 8000}
+    \label{fig:server_running}
+\end{figure}
+
+\subsection{Testing with Swagger UI}
+
+One of the great features of FastAPI is that it automatically generates interactive API documentation. I accessed it by going to \texttt{http://127.0.0.1:8000/docs} in my browser.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{part1_02_swagger_ui.png}
+    \caption{FastAPI automatic Swagger UI documentation}
+    \label{fig:swagger_ui}
+\end{figure}
+
+I tested the API directly from the Swagger UI by clicking on the POST endpoint, then "Try it out", and entering the test data:
+
+\begin{lstlisting}[language=json]
+{
+  "question": "What is extractive question answering?",
+  "context": "Extractive Question Answering is the task of
+  extracting an answer from a text given a question. An example
+  of a question answering dataset is the SQuAD dataset, which is
+  entirely based on that task. If you would like to fine-tune a
+  model on a SQuAD task, you may leverage the `run_squad.py`."
+}
+\end{lstlisting}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{part1_03_swagger_input.png}
+    \caption{Input data for the question answering endpoint}
+    \label{fig:swagger_input}
+\end{figure}
+
+After clicking "Execute", the model processed the request and returned the answer:
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{part1_04_swagger_response.png}
+    \caption{API response showing the extracted answer}
+    \label{fig:swagger_response}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{part1_05_swagger_full_output.png}
+    \caption{Complete output from the Swagger UI test}
+    \label{fig:swagger_full}
+\end{figure}
+
+The model correctly extracted the answer: \textit{"the task of extracting an answer from a text given a question"}.
+
+\subsection{Testing with Python Script}
+
+To make testing easier without using Postman, I created a Python script called \texttt{test\_api.py}:
+
+\begin{lstlisting}[language=Python]
+import requests
+import json
+
+url = "http://127.0.0.1:8000/question_answering"
+
+data = {
+    "question": "What is extractive question answering?",
+    "context": "Extractive Question Answering is the task of
+    extracting an answer from a text given a question..."
+}
+
+response = requests.post(url, json=data)
+
+if response.status_code == 200:
+    print("SUCCESS!")
+    print(json.dumps(response.json(), indent=2))
+\end{lstlisting}
+
+I ran this script in a separate terminal while keeping the FastAPI server running:
+
+\begin{lstlisting}[language=bash]
+python test_api.py
+\end{lstlisting}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{part1_06_python_test_api.png}
+    \caption{Testing the API using a Python script}
+    \label{fig:python_test}
+\end{figure}
+
+The script successfully sent the POST request and received the correct answer, confirming that the API was working properly.
+
+\section{Challenges and Solutions}
+
+\subsection{TensorFlow/Keras Compatibility Issue}
+
+When I first ran the code, I encountered an error related to Keras 3 not being supported by the transformers library. The error message suggested installing \texttt{tf-keras}, but since we didn't actually need TensorFlow for this part, I simply added \texttt{framework='pt'} to force the use of PyTorch instead. This solved the problem immediately.
+
+\subsection{Understanding Async Functions}
+
+Initially, I wasn't sure why the endpoint function was defined as \texttt{async def} instead of just \texttt{def}. After researching, I learned that async functions allow FastAPI to handle multiple requests concurrently, which improves performance when dealing with I/O-bound operations like model inference.
+
+\section{How It Works Behind the Scenes}
+
+When I send a request to the API, here's what happens:
+
+\begin{enumerate}
+    \item \textbf{Request Reception}: FastAPI receives the POST request with JSON data
+    \item \textbf{Validation}: Pydantic validates that the data matches the QADataModel schema
+    \item \textbf{Tokenization}: The transformers pipeline tokenizes both the question and context into numerical tokens
+    \item \textbf{Model Processing}: DistilBERT processes the tokens using attention mechanisms to understand the relationship between the question and context
+    \item \textbf{Answer Extraction}: The model identifies the start and end positions of the answer in the context
+    \item \textbf{Response}: The extracted answer is returned as JSON
+\end{enumerate}
+
+\section{Conclusion}
+
+In this first part of the lab, I successfully deployed a DistilBERT question answering model using FastAPI. The implementation was straightforward, and FastAPI's automatic documentation made testing very easy. I learned about extractive question answering, how transformer models work, and how to create a REST API for serving machine learning models.
+
+The API is now ready to be tested for performance, which will happen in Part 4 when I compare it against the dockerized version and the TFX deployment.
+
+Next, I'll work on containerizing this application using Docker to see if there are any performance differences.
+
+\end{document}
